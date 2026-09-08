@@ -1,0 +1,30 @@
+INSERT INTO ledger_accounts
+(
+    id,
+    account_code,
+    account_type,
+    currency,
+    status
+)
+VALUES
+    (
+        '11111111-1111-1111-1111-111111111111',
+        'CUSTOMER:A:KZT',
+        'LIABILITY',
+        'KZT',
+        'OPEN'
+    ),
+    (
+        '22222222-2222-2222-2222-222222222222',
+        'CUSTOMER:B:KZT',
+        'LIABILITY',
+        'KZT',
+        'OPEN'
+    ),
+    (
+        '99999999-9999-9999-9999-999999999999',
+        'BANK:CASH:KZT',
+        'ASSET',
+        'KZT',
+        'OPEN'
+    );
