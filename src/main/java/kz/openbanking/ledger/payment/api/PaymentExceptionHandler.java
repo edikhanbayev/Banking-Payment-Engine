@@ -1,5 +1,7 @@
 package kz.openbanking.ledger.payment.api;
 
+import kz.openbanking.ledger.idempotency.domain.IdempotencyConflictException;
+import kz.openbanking.ledger.idempotency.domain.IdempotencyInProgressException;
 import kz.openbanking.ledger.payment.domain.AccountNotFoundException;
 import kz.openbanking.ledger.payment.domain.InsufficientFundsException;
 import kz.openbanking.ledger.payment.domain.InvalidTransferException;
@@ -43,6 +45,30 @@ public class PaymentExceptionHandler {
 
         return new ErrorResponse(
                 "INVALID_TRANSFER",
+                exception.getMessage()
+        );
+    }
+
+    @ExceptionHandler(IdempotencyConflictException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ErrorResponse idempotencyConflict(
+            IdempotencyConflictException exception
+    ) {
+
+        return new ErrorResponse(
+                "IDEMPOTENCY_CONFLICT",
+                exception.getMessage()
+        );
+    }
+
+    @ExceptionHandler(IdempotencyInProgressException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ErrorResponse idempotencyInProgress(
+            IdempotencyInProgressException exception
+    ) {
+
+        return new ErrorResponse(
+                "IDEMPOTENCY_REQUEST_IN_PROGRESS",
                 exception.getMessage()
         );
     }

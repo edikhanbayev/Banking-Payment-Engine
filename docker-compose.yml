@@ -21,5 +21,26 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:8-alpine
+    container_name: ledger-redis
+
+    ports:
+      - "6379:6379"
+
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:4.1.2
+    container_name: ledger-kafka
+
+    ports:
+      - "9092:9092"
+
+
 volumes:
   ledger_postgres_data:

@@ -3,14 +3,17 @@ package kz.openbanking.ledger.payment.service;
 import kz.openbanking.ledger.account.domain.AccountState;
 import kz.openbanking.ledger.account.domain.AccountStatus;
 import kz.openbanking.ledger.account.repository.AccountStateRepository;
+import kz.openbanking.ledger.idempotency.domain.IdempotencyDecision;
 import kz.openbanking.ledger.ledger.domain.JournalCommand;
 import kz.openbanking.ledger.ledger.domain.PostingCommand;
 import kz.openbanking.ledger.ledger.domain.PostingDirection;
 import kz.openbanking.ledger.ledger.service.LedgerService;
+import kz.openbanking.ledger.outbox.service.OutboxService;
 import kz.openbanking.ledger.payment.domain.*;
 import kz.openbanking.ledger.payment.repository.PaymentRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import kz.openbanking.ledger.idempotency.service.*;
 
 import java.util.List;
 import java.util.Map;
@@ -27,11 +30,19 @@ public class PaymentService {
 
     private final LedgerService ledgerService;
 
+    private final IdempotencyService idempotencyService;
+
+    private final IdempotencyHasher idempotencyHasher;
+
+    private final OutboxService outboxService;
 
     public PaymentService(
             AccountStateRepository accountStateRepository,
             PaymentRepository paymentRepository,
-            LedgerService ledgerService
+            LedgerService ledgerService,
+            IdempotencyService idempotencyService,
+            IdempotencyHasher idempotencyHasher,
+            OutboxService outboxService
     ) {
 
         this.accountStateRepository =
@@ -42,14 +53,33 @@ public class PaymentService {
 
         this.ledgerService =
                 ledgerService;
+
+        this.idempotencyService = idempotencyService;
+        this.idempotencyHasher = idempotencyHasher;
+        this.outboxService = outboxService;
     }
 
 
     @Transactional
     public InternalTransferResult transfer(
+            String clientId,
+            String idempotencyKey,
             InternalTransferCommand command
     ) {
 
+        String requestHash =
+                idempotencyHasher.hash(command);
+
+        IdempotencyDecision decision =
+                idempotencyService.acquire(
+                        clientId,
+                        idempotencyKey,
+                        requestHash
+                );
+
+        if (decision.replay()) {
+            return decision.result();
+        }
         validateBasicRequest(command);
 
 
@@ -147,6 +177,13 @@ public class PaymentService {
                 command.currency()
         );
 
+        paymentRepository.transitionStatus(
+                paymentId,
+                PaymentStatus.INITIATED,
+                PaymentStatus.PROCESSING,
+                "Internal transfer processing started"
+        );
+
 
         JournalCommand journal =
                 new JournalCommand(
@@ -185,12 +222,30 @@ public class PaymentService {
                 journalId
         );
 
-
-        return new InternalTransferResult(
+        outboxService.paymentPosted(
                 paymentId,
                 journalId,
-                PaymentStatus.POSTED
+                debtor.accountId(),
+                creditor.accountId(),
+                command.amountMinor(),
+                command.currency()
         );
+
+
+        InternalTransferResult result =
+                new InternalTransferResult(
+                        paymentId,
+                        journalId,
+                        PaymentStatus.POSTED
+                );
+
+        idempotencyService.complete(
+                clientId,
+                idempotencyKey,
+                requestHash,
+                result
+        );
+        return result;
     }
 
 

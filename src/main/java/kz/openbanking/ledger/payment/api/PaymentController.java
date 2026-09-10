@@ -26,6 +26,12 @@ public class PaymentController {
     @PostMapping("/internal")
     @ResponseStatus(HttpStatus.CREATED)
     public InternalTransferResponse transfer(
+            @RequestHeader("X-Client-Id")
+            String clientId,
+
+            @RequestHeader("Idempotency-Key")
+            String idempotencyKey,
+
             @Valid @RequestBody
             InternalTransferRequest request
     ) {
@@ -40,7 +46,7 @@ public class PaymentController {
 
 
         InternalTransferResult result =
-                paymentService.transfer(command);
+                paymentService.transfer(clientId, idempotencyKey,command);
 
 
         return new InternalTransferResponse(
