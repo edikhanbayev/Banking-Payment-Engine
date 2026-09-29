@@ -1,19 +1,19 @@
-# Open Banking: двойная бухгалтерская запись и платежный движок
+# Open Banking: Double-Entry Ledger and Payment Engine
 
-Backend-проект финансового реестра и обработки платежей, разработанный на **Java 21, Spring Boot, PostgreSQL, Redis и Apache Kafka**.
+A backend project for financial ledgering and payment processing, built with **Java 21, Spring Boot, PostgreSQL, Redis, and Apache Kafka**.
 
-Проект сосредоточен на задачах, которые простые CRUD-приложения обычно не учитывают: **двойная бухгалтерская запись, неизменяемая финансовая история, конкурентное списание средств, идемпотентность API-запросов, границы транзакций, асинхронная доставка событий и аудит**.
+The project focuses on concerns that simple CRUD applications usually do not address: **double-entry accounting, immutable financial history, concurrent debiting, API idempotency, transaction boundaries, asynchronous event delivery, and auditability**.
 
-Долгосрочная цель проекта — создать платежный движок, ориентированный на сценарии **Kazakhstan Open Banking**. Текущая реализация **еще не является полной реализацией спецификации Kazakhstan Open Banking**.
+The long-term goal is to build a payment engine oriented toward **Kazakhstan Open Banking** use cases. The current implementation **is not yet a complete implementation of the Kazakhstan Open Banking specification**.
 
-> **Статус проекта:** активная разработка. Реализованы ядро финансового реестра, конкурентные внутренние переводы, идемпотентность, Transactional Outbox, публикация событий через Kafka и жизненный цикл платежа.
+> **Project status:** active development. The core financial ledger, concurrent internal transfers, idempotency, Transactional Outbox, Kafka event publishing, and payment lifecycle have been implemented.
 
 ---
 
-## Архитектура
+## Architecture
 
 ```text
-    Клиент API
+    API Client
         |
         | POST transfer + Idempotency-Key
         v
@@ -21,81 +21,81 @@ Backend-проект финансового реестра и обработки
         |
         v
     Redis
-    кэш идемпотентности
+    idempotency cache
         |
-        +--> попадание в кэш --> возврат сохраненного ответа
+        +--> cache hit --> return stored response
         |
-        +--> промах
+        +--> miss
               |
               v
-         PostgreSQL
-         идемпотентность
+          PostgreSQL
+          idempotency
               |
               v
-         Блокировка счетов
-         SELECT FOR UPDATE
-         ORDER BY account_id
+          Account locking
+          SELECT FOR UPDATE
+          ORDER BY account_id
               |
               v
-         Проверка счетов
-         и доступных средств
+          Account validation
+          and available-funds check
               |
               v
-         Жизненный цикл платежа
-         INITIATED -> PROCESSING -> POSTED
+          Payment lifecycle
+          INITIATED -> PROCESSING -> POSTED
               |
               v
-         Двойная бухгалтерская запись
+          Double-entry ledger
               |
-              +--> неизменяемые journal_entries и postings
+              +--> immutable journal_entries and postings
               |
               +--> account_state
-              |    проекция текущего баланса
+              |    current-balance projection
               |
               v
-         Transactional Outbox
+          Transactional Outbox
               |
               v
-         Фоновая публикация
+          Background publishing
               |
               v
-         Apache Kafka
-         payment.events
+          Apache Kafka
+          payment.events
 ```
 
-Главное архитектурное правило проекта:
+The key architectural rule of the project is:
 
-> **PostgreSQL является границей финансовой корректности.**
+> **PostgreSQL is the boundary of financial correctness.**
 
-Redis и Kafka повышают производительность и обеспечивают интеграцию, но не используются как источник истины для денежных операций.
+Redis and Kafka improve performance and provide integration capabilities, but they are not used as the source of truth for monetary operations.
 
 ---
 
-# Текущий стек технологий
+# Current Technology Stack
 
-| Компонент | Технология |
+| Component | Technology |
 |---|---|
-| Язык | Java 21 |
-| Фреймворк | Spring Boot 4.1.1 |
-| Сборка | Maven Wrapper |
-| База данных | PostgreSQL 18 |
-| Доступ к БД | Spring JDBC / `JdbcTemplate` |
-| Миграции БД | Flyway |
-| Кэш | Redis 8 |
-| Обмен сообщениями | Apache Kafka 4.1 |
+| Language | Java 21 |
+| Framework | Spring Boot 4.1.1 |
+| Build | Maven Wrapper |
+| Database | PostgreSQL 18 |
+| Database access | Spring JDBC / `JdbcTemplate` |
+| Database migrations | Flyway |
+| Cache | Redis 8 |
+| Messaging | Apache Kafka 4.1 |
 | JSON | Jackson |
-| Локальная инфраструктура | Docker Compose |
-| Тестирование | JUnit 5 |
+| Local infrastructure | Docker Compose |
+| Testing | JUnit 5 |
 
-Код финансового реестра намеренно использует явный SQL через `JdbcTemplate`, а не скрывает критичные финансовые операции за ORM-абстракциями.
+The financial-ledger code intentionally uses explicit SQL through `JdbcTemplate` rather than hiding critical financial operations behind ORM abstractions.
 
 ---
 
-# Основная финансовая модель
+# Core Financial Model
 
-Система не использует единственный изменяемый столбец `balance` как финансовый источник истины.
+The system does not use a single mutable `balance` column as the financial source of truth.
 
-Финансовая история представлена следующим образом:
+Financial history is represented as follows:
 
 ```text
 ledger_accounts
@@ -107,78 +107,78 @@ journal_entries
 postings
 ```
 
-Перевод 10 000 KZT со счета клиента A на счет клиента B создает бухгалтерскую запись следующего вида:
+A transfer of 10,000 KZT from customer account A to customer account B creates an accounting entry like this:
 
 ```text
-Журнал: внутренний перевод
+Journal: internal transfer
 
-DEBIT   Обязательство перед клиентом A    10 000 KZT
-CREDIT  Обязательство перед клиентом B    10 000 KZT
-                                        ------------
-Итого по дебету                       10 000 KZT
-Итого по кредиту                      10 000 KZT
+DEBIT   Liability to customer A    10,000 KZT
+CREDIT  Liability to customer B    10,000 KZT
+                                  ------------
+Total debit                       10,000 KZT
+Total credit                      10,000 KZT
 ```
 
-Каждый журнал должен удовлетворять правилу:
+Every journal must satisfy:
 
 ```text
 Σ Debit = Σ Credit
 ```
 
-Проверка выполняется отдельно для каждой валюты.
+The validation is performed separately for each currency.
 
-Например, такая запись отклоняется:
+For example, the following journal is rejected:
 
 ```text
 DEBIT   100 USD
 CREDIT  100 KZT
 ```
 
-несмотря на численное совпадение сумм.
+even though the numerical amounts are equal.
 
 ---
 
-# Представление денежных значений
+# Monetary Value Representation
 
-Денежные суммы хранятся в минимальных денежных единицах как целые числа:
+Monetary amounts are stored in minor currency units as integers:
 
 ```java
 long amountMinor;
 ```
 
-вместо использования типов с плавающей точкой.
+instead of floating-point types.
 
-Пример:
+Example:
 
 ```text
-10 000,50 KZT
+10,000.50 KZT
 =
-1 000 050 тиын
+1,000,050 tiyn
 ```
 
-В базе данных:
+In the database:
 
 ```sql
 amount_minor BIGINT
 ```
 
-Это позволяет избежать ошибок округления, связанных с числами с плавающей точкой.
+This avoids rounding errors associated with floating-point numbers.
 
 ---
 
-# Двойная защита от несбалансированных проводок
+# Dual Protection Against Unbalanced Entries
 
-Целостность бухгалтерских данных контролируется на двух уровнях.
+Accounting-data integrity is enforced at two levels.
 
-### Уровень приложения
+### Application Level
 
-`JournalValidator` проверяет, что сумма дебетов равна сумме кредитов до записи журнала.
+`JournalValidator` checks that the total debits equal the total credits before the journal is persisted.
 
-### Уровень PostgreSQL
+### PostgreSQL Level
 
-Отложенный constraint trigger в PostgreSQL независимо проверяет журнал перед фиксацией транзакции.
+A deferred constraint trigger in PostgreSQL independently validates the journal before the transaction is committed.
 
-Схематично:
+Conceptually:
 
 ```text
 BEGIN
@@ -190,19 +190,19 @@ INSERT credit
 COMMIT
    |
    v
-PostgreSQL проверяет:
+PostgreSQL verifies:
 Debit == Credit
 ```
 
-Это означает, что даже если будущая ошибка в Java-коде обойдет проверку приложения, несбалансированный журнал все равно не должен попасть в базу данных.
+This means that even if a future Java bug bypasses the application-level validation, an unbalanced journal should still not be committed to the database.
 
 ---
 
-# Неизменяемый финансовый реестр
+# Immutable Financial Ledger
 
-Зафиксированная финансовая история хранится по принципу append-only.
+Committed financial history is stored using an append-only approach.
 
-Триггеры PostgreSQL запрещают:
+PostgreSQL triggers prohibit:
 
 ```sql
 UPDATE postings ...
@@ -210,40 +210,40 @@ DELETE FROM postings ...
 TRUNCATE postings;
 ```
 
-и эквивалентные изменения таблицы `journal_entries`.
+and equivalent modifications to `journal_entries`.
 
-Финансовые ошибки должны исправляться не изменением старых записей, а созданием обратной проводки.
+Financial errors should be corrected not by modifying historical entries, but by creating a reversing entry.
 
-Пример:
+Example:
 
 ```text
-Исходная операция:
+Original transaction:
 
-DEBIT  A    10 000
-CREDIT B    10 000
+DEBIT  A    10,000
+CREDIT B    10,000
 
 
-Обратная проводка:
+Reversal:
 
-DEBIT  B    10 000
-CREDIT A    10 000
+DEBIT  B    10,000
+CREDIT A    10,000
 ```
 
-Исходная бухгалтерская запись при этом сохраняется для аудита.
+The original accounting entry remains preserved for audit purposes.
 
 ---
 
-# Проекция баланса
+# Balance Projection
 
-Чтение миллионов проводок при каждом запросе баланса было бы неэффективным.
+Reading millions of postings every time a balance is requested would be inefficient.
 
-Поэтому проект поддерживает таблицу:
+The project therefore maintains:
 
 ```text
 account_state
 ```
 
-с полями:
+with the following fields:
 
 ```text
 posted_balance_minor
@@ -252,37 +252,37 @@ version
 updated_at
 ```
 
-Важно различать:
+It is important to distinguish between:
 
 ```text
 postings
 =
-финансовый источник истины
+financial source of truth
 ```
 
-и:
+and:
 
 ```text
 account_state
 =
-производная проекция текущего состояния
+derived projection of current state
 ```
 
-Проекция обновляется внутри той же транзакции PostgreSQL, что и запись в финансовый реестр.
+The projection is updated inside the same PostgreSQL transaction that writes to the financial ledger.
 
-В дальнейшем планируется отдельный процесс сверки, который будет пересчитывать балансы по неизменяемому реестру и сравнивать их с `account_state`.
+A separate reconciliation process is planned to recompute balances from the immutable ledger and compare them with `account_state`.
 
 ---
 
-# API внутреннего перевода
+# Internal Transfer API
 
-Текущий платежный endpoint:
+The current payment endpoint is:
 
 ```http
 POST /api/v1/transfers/internal
 ```
 
-Пример запроса:
+Example request:
 
 ```http
 POST /api/v1/transfers/internal
@@ -300,7 +300,7 @@ Idempotency-Key: payment-test-001
 }
 ```
 
-Пример успешного ответа:
+Example successful response:
 
 ```json
 {
@@ -310,31 +310,31 @@ Idempotency-Key: payment-test-001
 }
 ```
 
-UUID выше приведены только как пример.
+The UUID values above are examples only.
 
 ---
 
-# Атомарная платежная транзакция
+# Atomic Payment Transaction
 
-Успешный перевод концептуально выполняется следующим образом:
+A successful transfer is conceptually executed as follows:
 
 ```text
 BEGIN
 
-1. Получить или проверить Idempotency-Key
+1. Acquire or validate Idempotency-Key
 
-2. Заблокировать обе строки account_state
+2. Lock both account_state rows
 
-3. Проверить:
-   - счета существуют
-   - счета находятся в статусе OPEN
-   - валюты совпадают
-   - доступных средств достаточно
+3. Validate:
+   - accounts exist
+   - accounts are in OPEN status
+   - currencies match
+   - sufficient available funds exist
 
 4. INSERT payment
    INITIATED
 
-5. Переход:
+5. Transition:
    INITIATED -> PROCESSING
 
 6. INSERT journal_entry
@@ -347,25 +347,25 @@ BEGIN
 
 10. UPDATE creditor account_state
 
-11. Переход:
+11. Transition:
     PROCESSING -> POSTED
 
 12. INSERT PaymentPosted outbox event
 
-13. Пометить идемпотентный запрос как COMPLETED
+13. Mark idempotent request as COMPLETED
 
 COMMIT
 
-14. Сохранить идемпотентный ответ в Redis
+14. Store idempotent response in Redis
 ```
 
-Если операция с базой данных завершается ошибкой до `COMMIT`, вся транзакция PostgreSQL откатывается.
+If a database operation fails before `COMMIT`, the entire PostgreSQL transaction is rolled back.
 
 ---
 
-# Защита от двойного списания при конкурентных запросах
+# Protection Against Double Spending Under Concurrent Requests
 
-Проект использует пессимистическую блокировку строк PostgreSQL:
+The project uses PostgreSQL pessimistic row locking:
 
 ```sql
 SELECT ...
@@ -375,192 +375,192 @@ ORDER BY account_id
 FOR UPDATE OF account_state;
 ```
 
-Рассмотрим ситуацию:
+Consider this situation:
 
 ```text
-Доступный баланс = 1 000 KZT
+Available balance = 1,000 KZT
 
-Запрос A = списать 800 KZT
-Запрос B = списать 800 KZT
+Request A = debit 800 KZT
+Request B = debit 800 KZT
 ```
 
-Без блокировки оба запроса могли бы одновременно увидеть баланс 1 000 KZT и оба завершиться успешно.
+Without locking, both requests could read a 1,000 KZT balance at the same time and both might succeed.
 
-При блокировке строк:
+With row locking:
 
 ```text
-Транзакция A
+Transaction A
     |
-    +-- блокирует счет
-    +-- видит 1 000
-    +-- списывает 800
-    +-- фиксирует баланс = 200
+    +-- locks the account
+    +-- sees 1,000
+    +-- debits 800
+    +-- commits balance = 200
 
-Транзакция B
+Transaction B
     |
-    +-- ожидает освобождения блокировки
-    +-- получает блокировку
-    +-- видит 200
-    +-- отклоняется: недостаточно средств
+    +-- waits for the lock
+    +-- acquires the lock
+    +-- sees 200
+    +-- is rejected: insufficient funds
 ```
 
-Именно PostgreSQL, а не Redis, обеспечивает финальную защиту от конкурентного перерасхода средств.
+PostgreSQL, not Redis, provides the final protection against concurrent overspending.
 
 ---
 
-# Порядок блокировок и снижение риска deadlock
+# Lock Ordering and Deadlock-Risk Reduction
 
-Переводы могут одновременно выполняться в противоположных направлениях:
+Transfers may execute simultaneously in opposite directions:
 
 ```text
 A -> B
 B -> A
 ```
 
-Если блокировать сначала `fromAccount`, а затем `toAccount`, возможна ситуация:
+If the system locks `fromAccount` first and `toAccount` second, this can occur:
 
 ```text
-Транзакция 1 блокирует A -> ждет B
-Транзакция 2 блокирует B -> ждет A
+Transaction 1 locks A -> waits for B
+Transaction 2 locks B -> waits for A
 ```
 
-Поэтому система блокирует обе строки счетов в детерминированном порядке:
+The system therefore locks both account rows in deterministic order:
 
 ```sql
 ORDER BY account_id
 FOR UPDATE;
 ```
 
-Таким образом, оба направления перевода получают блокировки в одном и том же каноническом порядке.
+This ensures both transfer directions acquire locks in the same canonical order.
 
-Это снижает риск важного класса взаимных блокировок, хотя не означает, что все возможные deadlock-сценарии исключены навсегда.
+It reduces the risk of an important class of deadlocks, although it does not imply that every possible deadlock scenario is permanently eliminated.
 
 ---
 
-# Строгая идемпотентность API
+# Strict API Idempotency
 
-Каждый платежный запрос должен содержать:
+Every payment request must contain:
 
 ```text
 Idempotency-Key
 ```
 
-Основное состояние идемпотентности хранится в PostgreSQL:
+The primary idempotency state is stored in PostgreSQL:
 
 ```text
 api_idempotency
 ```
 
-Уникальный ключ:
+Unique key:
 
 ```text
 (client_id, idempotency_key)
 ```
 
-Система также рассчитывает SHA-256 хэш канонического представления запроса на перевод.
+The system also calculates a SHA-256 hash of the canonical representation of the transfer request.
 
-Это обеспечивает три основных сценария.
+This supports three main scenarios.
 
-### Новый запрос
+### New Request
 
 ```text
-Новый ключ
+New key
 +
-новые данные
+new payload
 ->
-выполнить перевод
+execute transfer
 ```
 
-### Повтор запроса
+### Request Retry
 
 ```text
-Тот же ключ
+Same key
 +
-те же данные
+same payload
 ->
-вернуть исходный результат
+return original result
 ->
-не создавать второй финансовый эффект
+do not create a second financial effect
 ```
 
-### Некорректное повторное использование ключа
+### Invalid Key Reuse
 
 ```text
-Тот же ключ
+Same key
 +
-другие данные
+different payload
 ->
 HTTP 409 Conflict
 ```
 
-Это защищает API от сетевых повторов, например:
+This protects the API against network retries, for example:
 
 ```text
-Сервер фиксирует платеж
+Server commits payment
         |
         v
-HTTP-ответ теряется
+HTTP response is lost
         |
         v
-Клиент повторяет запрос
+Client retries request
         |
         v
-Возвращается результат исходного платежа
+Original payment result is returned
 ```
 
-вместо повторного выполнения денежной операции.
+instead of executing the monetary operation a second time.
 
 ---
 
-# Использование Redis
+# Redis Usage
 
-Redis используется только как **L1-кэш ответов для идемпотентности**.
+Redis is used only as an **L1 cache for idempotency responses**.
 
-Схема:
+Flow:
 
 ```text
-Запрос
+Request
   |
   v
 Redis
   |
-  +-- hit -> вернуть сохраненный результат
+  +-- hit -> return stored result
   |
   +-- miss
         |
         v
-    PostgreSQL
+     PostgreSQL
 ```
 
-Сбой Redis рассматривается как сбой кэша.
+A Redis failure is treated as a cache failure.
 
-Приложение переходит к PostgreSQL вместо того, чтобы делать доступность Redis условием безопасного выполнения платежа.
+The application falls back to PostgreSQL rather than making Redis availability a requirement for safe payment execution.
 
-Успешный ответ записывается в Redis только после фиксации транзакции PostgreSQL. Это не позволяет Redis сообщить об успешном платеже до того, как финансовая операция стала устойчиво сохраненной.
+A successful response is written to Redis only after the PostgreSQL transaction commits. This prevents Redis from reporting a successful payment before the financial operation has been durably persisted.
 
 ---
 
 # Transactional Outbox
 
-Прямая отправка сообщения в Kafka после фиксации транзакции базы данных создает окно отказа:
+Sending a Kafka message directly after committing the database transaction creates a failure window:
 
 ```text
-PostgreSQL COMMIT выполнен
+PostgreSQL COMMIT succeeds
         |
         v
-Приложение аварийно завершается
+Application crashes
         |
         v
-Сообщение в Kafka не отправлено
+Kafka message is never sent
 ```
 
-Проект решает эту проблему с помощью:
+The project addresses this using:
 
 ```text
 outbox_events
 ```
 
-Финансовая транзакция записывает событие в PostgreSQL внутри той же транзакции:
+The financial transaction writes the event to PostgreSQL inside the same transaction:
 
 ```text
 BEGIN
@@ -574,15 +574,15 @@ outbox event
 COMMIT
 ```
 
-Публикация в Kafka выполняется отдельно.
+Kafka publishing happens separately.
 
-Это означает, что у каждого зафиксированного платежа остается устойчиво сохраненное событие, ожидающее публикации.
+This means every committed payment leaves behind a durably stored event waiting to be published.
 
 ---
 
-# Публикация событий через Kafka
+# Kafka Event Publishing
 
-Фоновый процесс читает неопубликованные события:
+A background process reads unpublished events:
 
 ```sql
 SELECT ...
@@ -592,15 +592,15 @@ ORDER BY created_at, id
 FOR UPDATE SKIP LOCKED;
 ```
 
-`SKIP LOCKED` позволяет нескольким обработчикам брать разные записи `outbox`, не ожидая строки, уже захваченные другим обработчиком.
+`SKIP LOCKED` allows multiple workers to claim different outbox records without waiting on rows already locked by another worker.
 
-События публикуются в:
+Events are published to:
 
 ```text
 payment.events
 ```
 
-Пример события `PaymentPosted`:
+Example `PaymentPosted` event:
 
 ```json
 {
@@ -615,81 +615,81 @@ payment.events
 }
 ```
 
-После подтверждения публикации со стороны Kafka в строку `outbox` записывается:
+After Kafka confirms publication, the following field is written to the outbox row:
 
 ```text
 published_at
 ```
 
-а счетчик попыток обновляется.
+and the attempt counter is updated.
 
 ---
 
-# Поведение при недоступности Kafka
+# Behavior When Kafka Is Unavailable
 
-Kafka намеренно находится вне синхронной финансовой транзакции.
+Kafka is intentionally outside the synchronous financial transaction.
 
-Если Kafka недоступна:
+If Kafka is unavailable:
 
 ```text
-Платеж               ✅ зафиксирован
-Финансовый реестр    ✅ зафиксирован
-Балансы               ✅ зафиксированы
-Идемпотентность       ✅ зафиксирована
-Outbox event          ✅ зафиксирован
-Публикация в Kafka    ❌ временно недоступна
+Payment               ✅ committed
+Financial ledger       ✅ committed
+Balances               ✅ committed
+Idempotency            ✅ committed
+Outbox event           ✅ committed
+Kafka publication      ❌ temporarily unavailable
 ```
 
-После восстановления Kafka фоновый процесс повторно отправит неопубликованные события.
+After Kafka recovers, the background process retries unpublished events.
 
-Следовательно, доступность Kafka не определяет корректность финансового реестра.
+Therefore, Kafka availability does not determine the correctness of the financial ledger.
 
 ---
 
-# Семантика доставки
+# Delivery Semantics
 
-Текущая модель доставки событий:
+The current event-delivery model is:
 
 ```text
 at-least-once
 ```
 
-а не:
+not:
 
 ```text
 exactly-once
 ```
 
-Например:
+For example:
 
 ```text
-Kafka получает событие
+Kafka receives event
         |
         v
-Приложение аварийно завершается до обновления published_at
+Application crashes before published_at is updated
         |
         v
-Фоновый обработчик запускается снова
+Background worker starts again
         |
         v
-Событие может быть опубликовано повторно
+Event may be published again
 ```
 
-Поэтому будущие потребители Kafka должны устранять дубликаты по:
+Future Kafka consumers must therefore deduplicate events using:
 
 ```text
 eventId
 ```
 
-Идемпотентный consumer / inbox пока не реализован.
+An idempotent consumer / inbox pattern has not yet been implemented.
 
 ---
 
-# Жизненный цикл платежа
+# Payment Lifecycle
 
-Бизнес-состояние платежа хранится отдельно от бухгалтерской истории.
+Payment business state is stored separately from accounting history.
 
-Текущие статусы:
+Current statuses:
 
 ```text
 INITIATED
@@ -700,7 +700,7 @@ FAILED
 REVERSED
 ```
 
-Внутренние переводы обычно проходят следующие состояния:
+Internal transfers typically move through:
 
 ```text
 INITIATED
@@ -712,13 +712,13 @@ PROCESSING
 POSTED
 ```
 
-Переходы фиксируются в таблице:
+Transitions are recorded in:
 
 ```text
 payment_status_history
 ```
 
-Пример:
+Example:
 
 ```text
 NULL        -> INITIATED
@@ -726,47 +726,47 @@ INITIATED   -> PROCESSING
 PROCESSING  -> POSTED
 ```
 
-Это разделение сделано намеренно:
+This separation is intentional:
 
 ```text
 payments
 =
-бизнес-процесс платежа
+payment business process
 ```
 
-а:
+whereas:
 
 ```text
 journal_entries + postings
 =
-финансовая бухгалтерская истина
+financial accounting truth
 ```
 
-Финансовый реестр неизменяем, а состояние платежного процесса может изменяться.
+The financial ledger is immutable, while payment-process state may change.
 
 ---
 
-# Текущая схема базы данных
+# Current Database Schema
 
-Основные реализованные таблицы:
+Main implemented tables:
 
-| Таблица | Назначение |
+| Table | Purpose |
 |---|---|
-| `ledger_accounts` | Финансовые счета |
-| `journal_entries` | Заголовки бухгалтерских операций |
-| `postings` | Неизменяемые дебетовые и кредитовые проводки |
-| `account_state` | Проекция текущего баланса |
-| `payments` | Жизненный цикл платежа |
-| `payment_status_history` | История изменений статуса платежа |
-| `api_idempotency` | Устойчивая идемпотентность HTTP API |
-| `outbox_events` | Transactional Outbox для Kafka |
-| `flyway_schema_history` | История миграций БД |
+| `ledger_accounts` | Financial accounts |
+| `journal_entries` | Accounting journal headers |
+| `postings` | Immutable debit and credit postings |
+| `account_state` | Current-balance projection |
+| `payments` | Payment lifecycle |
+| `payment_status_history` | Payment status history |
+| `api_idempotency` | Durable HTTP API idempotency |
+| `outbox_events` | Transactional Outbox for Kafka |
+| `flyway_schema_history` | Database migration history |
 
 ---
 
-# Миграции базы данных
+# Database Migrations
 
-Текущие миграции:
+Current migrations:
 
 ```text
 V1__create_ledger_schema.sql
@@ -780,15 +780,15 @@ V8__create_outbox.sql
 V9__extend_payment_lifecycle.sql
 ```
 
-Все изменения схемы базы данных выполняются только через миграции Flyway.
+All database-schema changes are performed exclusively through Flyway migrations.
 
 ---
 
-# Локальный запуск
+# Local Setup
 
-## Требования
+## Requirements
 
-Установите:
+Install:
 
 ```text
 Java 21
@@ -796,25 +796,25 @@ Docker Desktop
 Git
 ```
 
-Отдельная установка Maven не требуется, поскольку репозиторий содержит Maven Wrapper.
+A separate Maven installation is not required because the repository includes Maven Wrapper.
 
 ---
 
-## Запуск инфраструктуры
+## Start Infrastructure
 
-Из корневой папки проекта:
+From the project root:
 
 ```powershell
 docker compose up -d
 ```
 
-Проверка:
+Check:
 
 ```powershell
 docker compose ps
 ```
 
-В текущем окружении должны быть запущены:
+The current environment should run:
 
 ```text
 PostgreSQL
@@ -824,25 +824,25 @@ Kafka
 
 ---
 
-## Запуск приложения
+## Start the Application
 
-Для Windows:
+On Windows:
 
 ```powershell
 .\mvnw.cmd spring-boot:run
 ```
 
-API будет доступен по адресу:
+The API will be available at:
 
 ```text
 http://localhost:8080
 ```
 
-Миграции Flyway выполняются автоматически при запуске.
+Flyway migrations run automatically on startup.
 
 ---
 
-## Запуск тестов
+## Run Tests
 
 ```powershell
 .\mvnw.cmd test
@@ -850,9 +850,9 @@ http://localhost:8080
 
 ---
 
-# Демонстрационные счета
+# Demo Accounts
 
-Миграции для среды разработки создают демонстрационные счета в KZT, например:
+Development migrations create demonstration KZT accounts, for example:
 
 ```text
 Customer A
@@ -865,31 +865,31 @@ Bank Cash
 99999999-9999-9999-9999-999999999999
 ```
 
-Наличие счета не означает наличие баланса.
+The existence of an account does not imply that it has a balance.
 
-Баланс возникает из бухгалтерских проводок.
+A balance is created by accounting postings.
 
-Временный endpoint для разработки:
+Temporary development endpoint:
 
 ```http
 POST /internal/ledger/journals
 ```
 
-может использоваться для создания исходных проводок пополнения.
+can be used to create initial funding postings.
 
-Этот endpoint предназначен только для разработки и тестирования и не должен быть доступен как публичный банковский API в промышленной среде.
+This endpoint is intended only for development and testing and should not be exposed as a public banking API in production.
 
 ---
 
-# Полезные проверки базы данных
+# Useful Database Checks
 
-Подключение к PostgreSQL:
+Connect to PostgreSQL:
 
 ```powershell
 docker exec -it ledger-postgres psql -U ledger -d ledger
 ```
 
-Проверка миграций Flyway:
+Check Flyway migrations:
 
 ```sql
 SELECT
@@ -900,7 +900,7 @@ FROM flyway_schema_history
 ORDER BY installed_rank;
 ```
 
-Проверка статусов платежей:
+Check payment statuses:
 
 ```sql
 SELECT
@@ -910,7 +910,7 @@ FROM payments
 GROUP BY status;
 ```
 
-Проверка ожидающих публикации событий:
+Check events waiting for publication:
 
 ```sql
 SELECT
@@ -922,7 +922,7 @@ FROM outbox_events
 ORDER BY created_at DESC;
 ```
 
-Проверка deadlock в PostgreSQL:
+Check PostgreSQL deadlocks:
 
 ```sql
 SELECT
@@ -934,176 +934,176 @@ WHERE datname = 'ledger';
 
 ---
 
-# Реализованные гарантии
+# Implemented Guarantees
 
-Текущая версия проекта обеспечивает:
+The current version provides:
 
-- двойную бухгалтерскую запись;
-- проверку дебета и кредита на уровне Java;
-- независимую проверку бухгалтерской корректности на уровне PostgreSQL;
-- балансировку проводок отдельно по каждой валюте;
-- неизменяемость `journal_entries` и `postings`;
-- хранение денежных значений в целых минимальных единицах;
-- атомарное обновление платежа, финансового реестра и балансов;
-- отдельную проекцию текущего баланса;
-- проверку достаточности средств;
-- пессимистическую блокировку строк PostgreSQL;
-- детерминированный порядок блокировки счетов;
-- защиту от конкурентного двойного списания;
-- устойчивую идемпотентность API в PostgreSQL;
-- SHA-256 отпечаток содержимого запроса;
-- возврат результата исходного запроса при безопасном повторе;
-- обнаружение повторного использования одного `Idempotency-Key` с другими данными;
-- Redis-кэш идемпотентных ответов с fallback на PostgreSQL;
+- double-entry accounting;
+- debit/credit validation at the Java level;
+- independent accounting-correctness validation at the PostgreSQL level;
+- posting balance validation separately for each currency;
+- immutability of `journal_entries` and `postings`;
+- storage of monetary values in integer minor units;
+- atomic updates across payments, financial ledger, and balances;
+- a separate current-balance projection;
+- sufficient-funds checks;
+- PostgreSQL pessimistic row locking;
+- deterministic account-lock ordering;
+- protection against concurrent double spending;
+- durable API idempotency in PostgreSQL;
+- SHA-256 fingerprinting of request content;
+- return of the original result for safe retries;
+- detection of reuse of the same `Idempotency-Key` with different request data;
+- Redis caching of idempotent responses with PostgreSQL fallback;
 - Transactional Outbox;
-- фоновую публикацию событий в Kafka;
-- повторяемую доставку событий;
-- явно принятую семантику `at-least-once`;
-- жизненный цикл платежа;
-- историю изменения статусов платежа.
+- background Kafka event publishing;
+- retryable event delivery;
+- explicitly accepted `at-least-once` semantics;
+- payment lifecycle management;
+- payment-status history.
 
 ---
 
-# Текущие ограничения
+# Current Limitations
 
-Репозиторий намеренно **не описывается как production-ready или bank-grade**.
+The repository is intentionally **not described as production-ready or bank-grade**.
 
-На текущий момент еще не реализованы:
+The following have not yet been implemented:
 
 ```text
-Резервирование средств
+Funds reservation
 
-Внешний платежный расчет
+External payment settlement
 
-Идемпотентные Kafka consumers / inbox pattern
+Idempotent Kafka consumers / inbox pattern
 
 Dead-letter queue
 
-Автоматическая сверка
+Automated reconciliation
 
 OAuth2 / OpenID Connect
 
-Управление согласием клиента
+Customer consent management
 
-Адаптеры Kazakhstan Open Banking API
+Kazakhstan Open Banking API adapters
 
-Интеграция ISO 20022
+ISO 20022 integration
 
-Аудит событий безопасности
+Security-event audit log
 
 Rate limiting
 
-Метрики Prometheus
+Prometheus metrics
 
-Дашборды Grafana
+Grafana dashboards
 
-Нагрузочное тестирование через k6
+Load testing with k6
 
-Интеграционные тесты через Testcontainers
+Integration tests with Testcontainers
 
-Автоматизированный CI/CD pipeline
+Automated CI/CD pipeline
 
-Управление секретами
+Secrets management
 
-Промышленные роли и права доступа PostgreSQL
+Production-grade PostgreSQL roles and permissions
 
 TLS / mTLS
 
-Политики retry/backoff
+Retry/backoff policies
 
-Стратегия Disaster Recovery
+Disaster Recovery strategy
 ```
 
-Поэтому проект корректнее описывать как:
+The project is therefore more accurately described as:
 
-> **инженерный проект платежного движка и финансового реестра, ориентированный на сценарии Kazakhstan Open Banking**
+> **an engineering project for a payment engine and financial ledger oriented toward Kazakhstan Open Banking use cases**
 
-а не как:
+rather than:
 
-> **полностью совместимую с Kazakhstan Open Banking систему**
+> **a fully Kazakhstan Open Banking-compliant system**
 
-поскольку формальные внешние Open Banking API, безопасность и управление согласием пока не реализованы.
+because the formal external Open Banking APIs, security model, and consent management have not yet been implemented.
 
 ---
 
-# Планируемые следующие шаги
+# Planned Next Steps
 
-Следующие этапы развития:
+The next development stages are:
 
 ```text
-1. Резервирование средств и available-balance holds
+1. Funds reservation and available-balance holds
 
-2. Архитектурная граница адаптера Kazakhstan Open Banking
+2. Kazakhstan Open Banking adapter architecture boundary
 
 3. Account Information APIs
 
-4. OAuth2, JWT и управление согласием
+4. OAuth2, JWT, and consent management
 
-5. Неизменяемый журнал событий безопасности
+5. Immutable security-event audit log
 
-6. Наблюдаемость, сверка, интеграционное тестирование,
-   нагрузочное тестирование и подготовка к production
+6. Observability, reconciliation, integration testing,
+   load testing, and production-readiness work
 ```
 
 ---
 
-# Инженерные принципы
+# Engineering Principles
 
-Проект строится на следующих принципах:
+The project is built around the following principles:
 
 ```text
-PostgreSQL отвечает за финансовую корректность.
+PostgreSQL is responsible for financial correctness.
 
-Финансовый реестр неизменяем.
+The financial ledger is immutable.
 
-Баланс является производным состоянием, а не финансовой историей.
+Balance is derived state, not financial history.
 
-Денежные значения хранятся в целых минимальных единицах.
+Monetary values are stored as integer minor units.
 
-Каждый бухгалтерский журнал должен быть сбалансирован.
+Every accounting journal must be balanced.
 
-Блокировки счетов выполняются в детерминированном порядке.
+Account locks are acquired in deterministic order.
 
-Повтор сетевого запроса не должен создавать повторный платеж.
+A network retry must not create a duplicate payment.
 
-Redis является оптимизацией, а не источником истины.
+Redis is an optimization, not the source of truth.
 
-Сбой Kafka не должен приводить к потере событий уже зафиксированного платежа.
+Kafka failure must not lose events for already committed payments.
 
-Доставка Kafka рассматривается как at-least-once.
+Kafka delivery is treated as at-least-once.
 
-Бизнес-состояние платежа и бухгалтерская история — разные концепции.
+Payment business state and accounting history are different concepts.
 
-Архитектурные утверждения должны подтверждаться тестами,
-а не только диаграммами.
+Architectural claims should be supported by tests,
+not only by diagrams.
 ```
 
 ---
 
-# Цель проекта
+# Project Goal
 
-Цель этого репозитория — не имитация полноценного коммерческого банка.
+The purpose of this repository is not to simulate a complete commercial bank.
 
-Проект предназначен для демонстрации инженерных подходов, характерных для финансовых и платежных систем:
+The project is intended to demonstrate engineering approaches common in financial and payment systems:
 
 ```text
-Бухгалтерские инварианты
+Accounting invariants
 
-Изоляция транзакций
+Transaction isolation
 
-Управление конкурентным доступом
+Concurrency control
 
-Предотвращение race conditions
+Race-condition prevention
 
-Идемпотентные API
+Idempotent APIs
 
-Обработка отказов распределенной системы
+Distributed-system failure handling
 
-Событийная архитектура
+Event-driven architecture
 
-Аудируемость
+Auditability
 
-Приоритет корректности на уровне базы данных
+Database-first correctness
 ```
 
-В дальнейшем проект будет развиваться в сторону сценариев Kazakhstan Open Banking, при этом финансовый реестр останется независимым от внешних API-протоколов.
+The project will continue evolving toward Kazakhstan Open Banking use cases while keeping the financial ledger independent of external API protocols.
